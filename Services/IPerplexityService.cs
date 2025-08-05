@@ -3,12 +3,8 @@ using System.Threading.Tasks;
 
 public interface IPerplexityService
 {
-    // Analyzes a single requirement
-    Task<AnalysisResponse> AnalyzeAsync(string text);
-
-    // Enhances a single requirement
-    Task<EnhancementResponse> EnhanceAsync(string text);
-
-    // Analyzes a batch of requirements
-    Task<List<AnalysisResponse>> BatchAnalyzeAsync(IEnumerable<string> texts);
+    Task<AnalysisResponse> AnalyzeRequirementAsync(string requirement);
+    Task<EnhancementResponse> EnhanceRequirementAsync(string requirement, List<QualityIssueDto>? issues = null);
+    Task<bool> TestConnectionAsync();
+    Task<List<AnalysisResponse>> BatchAnalyzeAsync(List<string> requirements);
 }

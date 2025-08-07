@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
 using RequirementsAnalyzer.API.DTOs;
 using RequirementsAnalyzer.API.Services;
-using System.ComponentModel.DataAnnotations;
 
 namespace RequirementsAnalyzer.API.Controllers
 {
+    /// <summary>
+    /// Controller for managing requirements analysis and enhancement operations
+    /// </summary>
     [ApiController]
     [Route("api/[controller]")]
     public class RequirementsController : ControllerBase
@@ -12,6 +14,11 @@ namespace RequirementsAnalyzer.API.Controllers
         private readonly ILogger<RequirementsController> _logger;
         private readonly IPerplexityService _perplexityService;
 
+        /// <summary>
+        /// Initializes a new instance of the RequirementsController
+        /// </summary>
+        /// <param name="logger">Logger instance</param>
+        /// <param name="perplexityService">Perplexity service for AI operations</param>
         public RequirementsController(
             ILogger<RequirementsController> logger,
             IPerplexityService perplexityService)
@@ -21,249 +28,163 @@ namespace RequirementsAnalyzer.API.Controllers
         }
 
         /// <summary>
-        /// Health check endpoint to verify API and external service connectivity
+        /// Health check endpoint to verify API and Perplexity service status
         /// </summary>
+        /// <returns>Health status information</returns>
         [HttpGet("health")]
         public async Task<IActionResult> Health()
         {
-            try
-            {
-                var isPerplexityConnected = await _perplexityService.TestConnectionAsync();
+            var isPerplexityConnected = await _perplexityService.TestConnectionAsync();
+            var status = isPerplexityConnected ? "healthy" : "degraded";
 
-                return Ok(new {
-                    status = "healthy",
-                    message = "Requirements API is running",
-                    perplexityConnected = isPerplexityConnected,
-                    timestamp = DateTime.UtcNow,
-                    version = "1.0.0"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Health check failed");
-                return StatusCode(500, new {
-                    status = "unhealthy",
-                    message = "Health check failed",
-                    error = ex.Message,
-                    timestamp = DateTime.UtcNow
-                });
-            }
+            return Ok(new {
+                status = status,
+                message = "Requirements API is running",
+                perplexityConnected = isPerplexityConnected,
+                timestamp = DateTime.UtcNow
+            });
         }
 
         /// <summary>
-        /// Analyze a single requirement for quality issues
+        /// Analyzes a requirement for quality issues
         /// </summary>
         /// <param name="request">The requirement analysis request</param>
-        /// <returns>Analysis results with quality score and identified issues</returns>
+        /// <returns>Analysis results with quality score and issues</returns>
         [HttpPost("analyze")]
         public async Task<IActionResult> AnalyzeRequirement([FromBody] AnalyzeRequest request)
         {
             try
             {
-                // Validate input
                 if (string.IsNullOrWhiteSpace(request.Text))
                 {
-                    return BadRequest(new {
-                        error = "Requirement text is required",
-                        message = "Please provide a non-empty requirement text to analyze"
-                    });
+                    return BadRequest(new { error = "Requirement text is required" });
                 }
 
-                if (request.Text.Length > 5000)
-                {
-                    return BadRequest(new {
-                        error = "Requirement text too long",
-                        message = "Requirement text must be less than 5000 characters"
-                    });
-                }
-
-                _logger.LogInformation("Analyzing requirement: {Text}", request.Text.Substring(0, Math.Min(100, request.Text.Length)));
+                _logger.LogInformation("Analyzing requirement with {Length} characters", request.Text.Length);
 
                 var result = await _perplexityService.AnalyzeRequirementAsync(request.Text);
 
-                _logger.LogInformation("Analysis completed with score: {Score}, issues: {IssueCount}",
+                _logger.LogInformation("Analysis completed - Score: {Score}, Issues: {IssueCount}",
                     result.OverallScore, result.Issues.Count);
 
                 return Ok(result);
             }
-            catch (ArgumentException ex)
-            {
-                _logger.LogWarning(ex, "Invalid input for requirement analysis");
-                return BadRequest(new { error = "Invalid input", message = ex.Message });
-            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error analyzing requirement");
-                return StatusCode(500, new {
-                    error = "Internal server error",
-                    message = "An error occurred while analyzing the requirement. Please try again."
-                });
+                return StatusCode(500, new { error = "Internal server error", message = ex.Message });
             }
         }
 
         /// <summary>
-        /// Enhance a requirement based on identified quality issues
+        /// Enhances a requirement based on identified quality issues
         /// </summary>
         /// <param name="request">The requirement enhancement request</param>
-        /// <returns>Enhanced requirement suggestions with improvements</returns>
+        /// <returns>Enhanced requirement versions</returns>
         [HttpPost("enhance")]
         public async Task<IActionResult> EnhanceRequirement([FromBody] EnhanceRequest request)
         {
             try
             {
-                // Validate input
                 if (string.IsNullOrWhiteSpace(request.Text))
                 {
-                    return BadRequest(new {
-                        error = "Requirement text is required",
-                        message = "Please provide a non-empty requirement text to enhance"
-                    });
+                    return BadRequest(new { error = "Requirement text is required" });
                 }
 
-                if (request.Text.Length > 5000)
-                {
-                    return BadRequest(new {
-                        error = "Requirement text too long",
-                        message = "Requirement text must be less than 5000 characters"
-                    });
-                }
-
-                _logger.LogInformation("Enhancing requirement: {Text}", request.Text.Substring(0, Math.Min(100, request.Text.Length)));
+                _logger.LogInformation("Enhancing requirement with {IssueCount} identified issues",
+                    request.Issues?.Count ?? 0);
 
                 var result = await _perplexityService.EnhanceRequirementAsync(request.Text, request.Issues);
 
-                _logger.LogInformation("Enhancement completed with {Count} versions", result.Enhancements.Count);
+                _logger.LogInformation("Enhancement completed - {EnhancementCount} versions generated",
+                    result.Enhancements.Count);
 
                 return Ok(result);
-            }
-            catch (ArgumentException ex)
-            {
-                _logger.LogWarning(ex, "Invalid input for requirement enhancement");
-                return BadRequest(new { error = "Invalid input", message = ex.Message });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error enhancing requirement");
-                return StatusCode(500, new {
-                    error = "Internal server error",
-                    message = "An error occurred while enhancing the requirement. Please try again."
-                });
+                return StatusCode(500, new { error = "Internal server error", message = ex.Message });
             }
         }
 
         /// <summary>
-        /// Analyze multiple requirements in batch
+        /// Batch analyzes multiple requirements
         /// </summary>
-        /// <param name="request">Batch analysis request with multiple requirements</param>
+        /// <param name="request">The batch analysis request</param>
         /// <returns>Analysis results for all requirements</returns>
         [HttpPost("batch-analyze")]
         public async Task<IActionResult> BatchAnalyze([FromBody] BatchAnalyzeRequest request)
         {
             try
             {
-                // Validate input
-                if (request == null || request.Requirements == null || !request.Requirements.Any())
+                if (request.Requirements == null || !request.Requirements.Any())
                 {
-                    return BadRequest(new {
-                        error = "Requirements list is required",
-                        message = "Please provide a non-empty list of requirements to analyze"
-                    });
+                    return BadRequest(new { error = "At least one requirement is required" });
                 }
 
-                if (request.Requirements.Count > 50)
+                if (request.Requirements.Any(string.IsNullOrWhiteSpace))
                 {
-                    return BadRequest(new {
-                        error = "Too many requirements",
-                        message = "Batch analysis is limited to 50 requirements at a time"
-                    });
+                    return BadRequest(new { error = "All requirements must contain text" });
                 }
 
-                // Validate individual requirements
-                var invalidRequirements = request.Requirements
-                    .Select((req, index) => new { req, index })
-                    .Where(x => string.IsNullOrWhiteSpace(x.req) || x.req.Length > 5000)
-                    .ToList();
+                _logger.LogInformation("Starting batch analysis of {Count} requirements",
+                    request.Requirements.Count);
 
-                if (invalidRequirements.Any())
+                var results = new List<AnalysisResponse>();
+
+                foreach (var requirement in request.Requirements)
                 {
-                    return BadRequest(new {
-                        error = "Invalid requirements found",
-                        message = $"Requirements at positions {string.Join(", ", invalidRequirements.Select(x => x.index))} are invalid (empty or too long)"
-                    });
+                    try
+                    {
+                        var result = await _perplexityService.AnalyzeRequirementAsync(requirement);
+                        results.Add(result);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to analyze requirement: {Requirement}",
+                            requirement[..Math.Min(50, requirement.Length)]);
+
+                        // Add a failed analysis result
+                        results.Add(new AnalysisResponse {
+                            OverallScore = 0,
+                            Issues = new List<QualityIssueDto>
+                            {
+                                new QualityIssueDto
+                                {
+                                    Type = "processing_error",
+                                    Severity = "critical",
+                                    Description = "Failed to process this requirement",
+                                    ProblematicText = requirement[..Math.Min(20, requirement.Length)] + "...",
+                                    Suggestion = "Please review the requirement format and try again"
+                                }
+                            },
+                            AnalyzedAt = DateTime.UtcNow.ToString("O")
+                        });
+                    }
                 }
 
-                _logger.LogInformation("Starting batch analysis for {Count} requirements", request.Requirements.Count);
-
-                var results = await _perplexityService.BatchAnalyzeAsync(request.Requirements);
-
-                _logger.LogInformation("Batch analysis completed for {Count} requirements", results.Count);
+                _logger.LogInformation("Batch analysis completed - {SuccessCount}/{TotalCount} successful",
+                    results.Count(r => r.OverallScore > 0), request.Requirements.Count);
 
                 return Ok(results);
-            }
-            catch (ArgumentException ex)
-            {
-                _logger.LogWarning(ex, "Invalid input for batch analysis");
-                return BadRequest(new { error = "Invalid input", message = ex.Message });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error in batch analysis");
-                return StatusCode(500, new {
-                    error = "Internal server error",
-                    message = "An error occurred while analyzing the requirements. Please try again."
-                });
-            }
-        }
-
-        /// <summary>
-        /// Get analysis statistics and metrics
-        /// </summary>
-        [HttpGet("stats")]
-        public IActionResult GetAnalysisStats()
-        {
-            try
-            {
-                var stats = new {
-                    supportedIssueTypes = new[] { "ambiguity", "completeness", "consistency", "verifiability", "traceability" },
-                    supportedSeverityLevels = new[] { "critical", "major", "minor" },
-                    maxRequirementLength = 5000,
-                    maxBatchSize = 50,
-                    analysisFeatures = new[]
-                    {
-                        "IEEE 830 compliance checking",
-                        "Ambiguous term detection",
-                        "Modal verb analysis",
-                        "Measurability assessment",
-                        "Completeness validation"
-                    },
-                    enhancementCapabilities = new[]
-                    {
-                        "Active voice conversion",
-                        "Measurable criteria addition",
-                        "Specification completion",
-                        "Standard pattern application"
-                    }
-                };
-
-                return Ok(stats);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving analysis stats");
-                return StatusCode(500, new {
-                    error = "Internal server error",
-                    message = "Unable to retrieve analysis statistics"
-                });
+                return StatusCode(500, new { error = "Internal server error", message = ex.Message });
             }
         }
     }
 
-    // Additional DTOs for batch operations
+    /// <summary>
+    /// Request model for batch requirement analysis
+    /// </summary>
     public class BatchAnalyzeRequest
     {
-        [Required]
-        [MinLength(1, ErrorMessage = "At least one requirement is required")]
-        [MaxLength(50, ErrorMessage = "Maximum 50 requirements allowed")]
+        /// <summary>
+        /// List of requirements to analyze
+        /// </summary>
         public List<string> Requirements { get; set; } = new();
     }
 }

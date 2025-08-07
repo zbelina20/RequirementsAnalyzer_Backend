@@ -1,41 +1,32 @@
-﻿using Microsoft.EntityFrameworkCore;
-using Microsoft.OpenApi.Models;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
+﻿// Program.cs - Fixed with improved logging configuration
+using Microsoft.EntityFrameworkCore;
 using RequirementsAnalyzer.API.Configuration;
 using RequirementsAnalyzer.API.Data;
 using RequirementsAnalyzer.API.Services;
-using Serilog;
-using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure Serilog
-Log.Logger = new LoggerConfiguration()
-    .ReadFrom.Configuration(builder.Configuration)
-    .WriteTo.Console()
-    .WriteTo.File("logs/requirements-analyzer-.log", rollingInterval: RollingInterval.Day)
-    .CreateLogger();
+// Configure logging to reduce double logging
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.SetMinimumLevel(LogLevel.Information);
 
-builder.Host.UseSerilog();
+// Filter out excessive logging from Microsoft
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
 
 // Add services to the container
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-
-// Configure Swagger with detailed documentation
 builder.Services.AddSwaggerGen(c => {
-    c.SwaggerDoc("v1", new OpenApiInfo {
-        Title = "Requirements Quality Analyzer API",
+    c.SwaggerDoc("v1", new() {
+        Title = "Requirements Analyzer API",
         Version = "v1",
-        Description = "API for analyzing and enhancing software requirements quality using AI",
-        Contact = new OpenApiContact {
-            Name = "Requirements Analyzer",
-            Email = "contact@requirementsanalyzer.com"
-        }
+        Description = "API for analyzing and enhancing software requirements quality"
     });
 
-    // Include XML comments
-    var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    // Enable XML documentation
+    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
     var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
     if (File.Exists(xmlPath))
     {
@@ -47,64 +38,25 @@ builder.Services.AddSwaggerGen(c => {
 builder.Services.Configure<PerplexityConfig>(
     builder.Configuration.GetSection(PerplexityConfig.SectionName));
 
-// Validate configuration
-var perplexityConfig = builder.Configuration.GetSection(PerplexityConfig.SectionName).Get<PerplexityConfig>();
-if (string.IsNullOrEmpty(perplexityConfig?.ApiKey))
-{
-    Log.Warning("Perplexity API key is not configured. The service will use mock data.");
-    Log.Information("To configure API key, use: dotnet user-secrets set \"PerplexityApi:ApiKey\" \"your-key\"");
-}
-else
-{
-    Log.Information("Perplexity API key configured successfully");
-}
+// Add HTTP client for Perplexity API
+builder.Services.AddHttpClient<IPerplexityService, PerplexityService>();
 
-// Add HTTP client for Perplexity API with timeout
-builder.Services.AddHttpClient<IPerplexityService, PerplexityService>(client => {
-    client.Timeout = TimeSpan.FromSeconds(perplexityConfig?.TimeoutSeconds ?? 60);
-});
-
-// Register services
-builder.Services.AddScoped<IPerplexityService, PerplexityService>();
-
-// Add CORS for React app
+// Add CORS for React app - support both development ports
 builder.Services.AddCors(options => {
     options.AddPolicy("ReactApp", policy => {
-        policy.WithOrigins(
-                "http://localhost:3000",     // Default React dev server
-                "https://localhost:3001",    // Alternative React dev server
-                "http://localhost:3001",     // Alternative React dev server
-                "http://127.0.0.1:3000",     // Alternative localhost
-                "https://127.0.0.1:3001"     // Alternative localhost
-            )
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials()
-            .SetIsOriginAllowedToAllowWildcardSubdomains();
+        policy.WithOrigins("http://localhost:3000", "http://localhost:3001")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
     });
 });
 
-// Add health checks
-builder.Services.AddHealthChecks()
-    .AddCheck<PerplexityHealthCheck>("perplexity");
-
 // Add Entity Framework (commented out database for now)
-// Uncomment when you want to add database persistence
+// Uncomment when you want to add database
 /*
 builder.Services.AddDbContext<AppDbContext>(options =>
-{
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-    options.UseNpgsql(connectionString);
-});
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 */
-
-// Add memory cache for response caching
-builder.Services.AddMemoryCache();
-
-// Add response compression
-builder.Services.AddResponseCompression(options => {
-    options.EnableForHttps = true;
-});
 
 var app = builder.Build();
 
@@ -113,56 +65,47 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI(c => {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Requirements Analyzer API V1");
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Requirements Analyzer API v1");
         c.RoutePrefix = "swagger";
-        c.DisplayRequestDuration();
     });
-}
-else
-{
-    app.UseExceptionHandler("/error");
-    app.UseHsts();
+
+    // Add development exception page
+    app.UseDeveloperExceptionPage();
 }
 
-// IMPORTANT: Order matters for middleware
-app.UseHttpsRedirection();
-app.UseResponseCompression();
+// Enable CORS before other middleware
+app.UseCors("ReactApp");
 
-// Use Serilog request logging
-app.UseSerilogRequestLogging(options => {
-    options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+// Add request logging middleware for debugging
+app.Use(async (context, next) => {
+    var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+    logger.LogInformation("{Method} {Path} from {RemoteIP}",
+        context.Request.Method,
+        context.Request.Path,
+        context.Connection.RemoteIpAddress);
+
+    await next();
 });
 
-// CORS must be before UseAuthorization
-app.UseCors("ReactApp");
 app.UseAuthorization();
-
-// Add health check endpoint
-app.MapHealthChecks("/health");
-
 app.MapControllers();
 
-// Log startup information
-Log.Information("Requirements Quality Analyzer API starting up...");
-Log.Information("Environment: {Environment}", app.Environment.EnvironmentName);
-Log.Information("Perplexity API configured: {Configured}", !string.IsNullOrEmpty(perplexityConfig?.ApiKey));
-Log.Information("CORS enabled for React development servers");
+// Add a simple root endpoint
+app.MapGet("/", () => new {
+    message = "Requirements Analyzer API is running",
+    version = "1.0.0",
+    timestamp = DateTime.UtcNow,
+    swagger = "/swagger"
+});
 
-// Display available endpoints
-Log.Information("Available endpoints:");
-Log.Information("   Swagger UI: https://localhost:7277/swagger");
-Log.Information("   Health Check: https://localhost:7277/health");
-Log.Information("   Requirements API: https://localhost:7277/api/requirements");
+// Improved startup logging
+var logger = app.Services.GetRequiredService<ILogger<Program>>();
+logger.LogInformation("Requirements Analyzer API starting up...");
+logger.LogInformation("Environment: {Environment}", app.Environment.EnvironmentName);
 
-try
-{
-    app.Run();
-}
-catch (Exception ex)
-{
-    Log.Fatal(ex, "Application terminated unexpectedly");
-}
-finally
-{
-    Log.CloseAndFlush();
-}
+// Get the configured URLs
+var urls = builder.Configuration["urls"] ?? "http://localhost:5074";
+logger.LogInformation("API available at: {Urls}", urls);
+logger.LogInformation("Swagger UI: {Url}/swagger", urls.Split(';')[0]);
+
+app.Run();

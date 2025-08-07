@@ -1,5 +1,4 @@
-// Program.cs
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using RequirementsAnalyzer.API.Configuration;
@@ -31,7 +30,7 @@ builder.Services.AddSwaggerGen(c => {
         Description = "API for analyzing and enhancing software requirements quality using AI",
         Contact = new OpenApiContact {
             Name = "Requirements Analyzer",
-            Email = "zbelina20@student.foi.hr"
+            Email = "contact@requirementsanalyzer.com"
         }
     });
 
@@ -55,10 +54,14 @@ if (string.IsNullOrEmpty(perplexityConfig?.ApiKey))
     Log.Warning("Perplexity API key is not configured. The service will use mock data.");
     Log.Information("To configure API key, use: dotnet user-secrets set \"PerplexityApi:ApiKey\" \"your-key\"");
 }
+else
+{
+    Log.Information("Perplexity API key configured successfully");
+}
 
 // Add HTTP client for Perplexity API with timeout
 builder.Services.AddHttpClient<IPerplexityService, PerplexityService>(client => {
-    client.Timeout = TimeSpan.FromSeconds(perplexityConfig?.TimeoutSeconds ?? 30);
+    client.Timeout = TimeSpan.FromSeconds(perplexityConfig?.TimeoutSeconds ?? 60);
 });
 
 // Register services
@@ -67,10 +70,17 @@ builder.Services.AddScoped<IPerplexityService, PerplexityService>();
 // Add CORS for React app
 builder.Services.AddCors(options => {
     options.AddPolicy("ReactApp", policy => {
-        policy.WithOrigins("http://localhost:3000", "https://localhost:3001")
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
+        policy.WithOrigins(
+                "http://localhost:3000",     // Default React dev server
+                "https://localhost:3001",    // Alternative React dev server
+                "http://localhost:3001",     // Alternative React dev server
+                "http://127.0.0.1:3000",     // Alternative localhost
+                "https://127.0.0.1:3001"     // Alternative localhost
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials()
+            .SetIsOriginAllowedToAllowWildcardSubdomains();
     });
 });
 
@@ -114,12 +124,16 @@ else
     app.UseHsts();
 }
 
+// IMPORTANT: Order matters for middleware
 app.UseHttpsRedirection();
 app.UseResponseCompression();
 
 // Use Serilog request logging
-app.UseSerilogRequestLogging();
+app.UseSerilogRequestLogging(options => {
+    options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+});
 
+// CORS must be before UseAuthorization
 app.UseCors("ReactApp");
 app.UseAuthorization();
 
@@ -132,6 +146,13 @@ app.MapControllers();
 Log.Information("Requirements Quality Analyzer API starting up...");
 Log.Information("Environment: {Environment}", app.Environment.EnvironmentName);
 Log.Information("Perplexity API configured: {Configured}", !string.IsNullOrEmpty(perplexityConfig?.ApiKey));
+Log.Information("CORS enabled for React development servers");
+
+// Display available endpoints
+Log.Information("Available endpoints:");
+Log.Information("   Swagger UI: https://localhost:7277/swagger");
+Log.Information("   Health Check: https://localhost:7277/health");
+Log.Information("   Requirements API: https://localhost:7277/api/requirements");
 
 try
 {
@@ -144,39 +165,4 @@ catch (Exception ex)
 finally
 {
     Log.CloseAndFlush();
-}
-
-// Health check for Perplexity service
-public class PerplexityHealthCheck : IHealthCheck
-{
-    private readonly IPerplexityService _perplexityService;
-    private readonly ILogger<PerplexityHealthCheck> _logger;
-
-    public PerplexityHealthCheck(IPerplexityService perplexityService, ILogger<PerplexityHealthCheck> logger)
-    {
-        _perplexityService = perplexityService;
-        _logger = logger;
-    }
-
-    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            var isHealthy = await _perplexityService.TestConnectionAsync();
-
-            if (isHealthy)
-            {
-                return HealthCheckResult.Healthy("Perplexity API is responding");
-            }
-            else
-            {
-                return HealthCheckResult.Degraded("Perplexity API is not responding, using fallback data");
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Perplexity health check failed");
-            return HealthCheckResult.Unhealthy("Perplexity API health check failed", ex);
-        }
-    }
 }

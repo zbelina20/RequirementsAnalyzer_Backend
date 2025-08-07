@@ -360,11 +360,33 @@ MigrationBackup/
 .ionide/
 
 # Fody - auto-generated XML schema
-FodyWeavers.xsd"appsettings.Development.json" 
-"appsettings.*.json" 
-"!appsettings.json" 
-"appsettings.Development.json" 
-"appsettings.*.json" 
-"!appsettings.json" 
-/appsettings.Development.json
-/appsettings.json
+FodyWeavers.xsd
+
+# CUSTOM RULES FOR REQUIREMENTS ANALYZER PROJECT
+# ==============================================
+
+# SAFE TO COMMIT - Contains no sensitive data
+# appsettings.json should be committed
+
+# SENSITIVE FILES - NEVER COMMIT
+appsettings.Development.json
+appsettings.Production.json  
+appsettings.Staging.json
+appsettings.Local.json
+
+# User secrets (safe - stored outside project)
+secrets.json
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.production
+
+# Application logs
+logs/
+
+# Frontend node_modules and build
+requirements-analyzer-ui/node_modules/
+requirements-analyzer-ui/build/
+requirements-analyzer-ui/.env.local

@@ -1,4 +1,5 @@
 using RequirementsAnalyzer.API.DTOs;
+using RequirementsAnalyzer.API.Models;
 using System.Threading.Tasks;
 
 /// <summary>

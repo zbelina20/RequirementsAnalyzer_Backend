@@ -1,7 +1,7 @@
-﻿// Services/PerplexityService.cs
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using RequirementsAnalyzer.API.Configuration;
 using RequirementsAnalyzer.API.DTOs;
+using RequirementsAnalyzer.API.Models;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -481,7 +481,7 @@ Focus on creating requirements that are:
             var mockResult = new AnalysisResponse {
                 OverallScore = score,
                 Issues = issues,
-                AnalyzedAt = DateTime.UtcNow.ToString("O")
+                AnalyzedAt = DateTime.UtcNow
             };
 
             _logger.LogInformation("Mock analysis created: Score={Score}, Issues={IssueCount}", score, issues.Count);

@@ -1,7 +1,6 @@
-﻿// Program.cs - Fixed with improved logging configuration
+﻿// Program.cs - Updated with project services
 using Microsoft.EntityFrameworkCore;
 using RequirementsAnalyzer.API.Configuration;
-using RequirementsAnalyzer.API.Data;
 using RequirementsAnalyzer.API.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -22,7 +21,7 @@ builder.Services.AddSwaggerGen(c => {
     c.SwaggerDoc("v1", new() {
         Title = "Requirements Analyzer API",
         Version = "v1",
-        Description = "API for analyzing and enhancing software requirements quality"
+        Description = "API for analyzing and enhancing software requirements quality with project management"
     });
 
     // Enable XML documentation
@@ -40,6 +39,9 @@ builder.Services.Configure<PerplexityConfig>(
 
 // Add HTTP client for Perplexity API
 builder.Services.AddHttpClient<IPerplexityService, PerplexityService>();
+
+// Add project service (in-memory implementation for now)
+builder.Services.AddScoped<IProjectService, ProjectService>();
 
 // Add CORS for React app - support both development ports
 builder.Services.AddCors(options => {
@@ -95,7 +97,8 @@ app.MapGet("/", () => new {
     message = "Requirements Analyzer API is running",
     version = "1.0.0",
     timestamp = DateTime.UtcNow,
-    swagger = "/swagger"
+    swagger = "/swagger",
+    features = new[] { "Project Management", "Requirements Analysis", "Quality Enhancement" }
 });
 
 // Improved startup logging
@@ -107,5 +110,6 @@ logger.LogInformation("Environment: {Environment}", app.Environment.EnvironmentN
 var urls = builder.Configuration["urls"] ?? "http://localhost:5074";
 logger.LogInformation("API available at: {Urls}", urls);
 logger.LogInformation("Swagger UI: {Url}/swagger", urls.Split(';')[0]);
+logger.LogInformation("Features: Project Management, Requirements Analysis, Quality Enhancement");
 
 app.Run();

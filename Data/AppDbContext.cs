@@ -1,5 +1,5 @@
+/*
 using Microsoft.EntityFrameworkCore;
-using RequirementsAnalyzer.API.Models;
 
 namespace RequirementsAnalyzer.API.Data
 {
@@ -92,3 +92,5 @@ namespace RequirementsAnalyzer.API.Data
         }
     }
 }
+
+*/

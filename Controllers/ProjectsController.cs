@@ -1,5 +1,4 @@
-﻿// Controllers/ProjectsController.cs - Project management endpoints
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using RequirementsAnalyzer.API.DTOs;
 using RequirementsAnalyzer.API.Services;
 using System.Text.Json;

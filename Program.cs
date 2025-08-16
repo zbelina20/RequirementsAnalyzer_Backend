@@ -1,20 +1,11 @@
-﻿// Program.cs - Updated with project services
-using Microsoft.EntityFrameworkCore;
-using RequirementsAnalyzer.API.Configuration;
+﻿using Microsoft.EntityFrameworkCore;
+using RequirementsAnalyzer.API.Data;
 using RequirementsAnalyzer.API.Services;
+using RequirementsAnalyzer.API.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure logging to reduce double logging
-builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
-builder.Logging.SetMinimumLevel(LogLevel.Information);
-
-// Filter out excessive logging from Microsoft
-builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
-builder.Logging.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
-
-// Add services to the container
+// Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c => {
@@ -33,83 +24,76 @@ builder.Services.AddSwaggerGen(c => {
     }
 });
 
-// Configure Perplexity API settings
-builder.Services.Configure<PerplexityConfig>(
-    builder.Configuration.GetSection(PerplexityConfig.SectionName));
+// Add Entity Framework with PostgreSQL
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Add HTTP client for Perplexity API
+builder.Services.Configure<PerplexityConfig>(
+    builder.Configuration.GetSection("PerplexityApi"));
+
+// Add services
+builder.Services.AddScoped<IPerplexityService, PerplexityService>();
+builder.Services.AddScoped<IProjectService, ProjectService>();
 builder.Services.AddHttpClient<IPerplexityService, PerplexityService>();
 
-// Add project service (in-memory implementation for now)
-builder.Services.AddScoped<IProjectService, ProjectService>();
-
-// Add CORS for React app - support both development ports
+// Add CORS for your React frontend
 builder.Services.AddCors(options => {
-    options.AddPolicy("ReactApp", policy => {
-        policy.WithOrigins("http://localhost:3000", "http://localhost:3001")
+    options.AddPolicy("AllowReactApp", policy => {
+        policy.WithOrigins("http://localhost:3000")
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials();
     });
 });
 
-// Add Entity Framework (commented out database for now)
-// Uncomment when you want to add database
-/*
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
-*/
-
 var app = builder.Build();
 
-// Configure the HTTP request pipeline
+// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI(c => {
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "Requirements Analyzer API v1");
-        c.RoutePrefix = "swagger";
+        c.RoutePrefix = string.Empty; // This serves Swagger UI at the app's root
     });
-
-    // Add development exception page
-    app.UseDeveloperExceptionPage();
 }
 
-// Enable CORS before other middleware
-app.UseCors("ReactApp");
-
-// Add request logging middleware for debugging
-app.Use(async (context, next) => {
-    var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
-    logger.LogInformation("{Method} {Path} from {RemoteIP}",
-        context.Request.Method,
-        context.Request.Path,
-        context.Connection.RemoteIpAddress);
-
-    await next();
-});
-
+app.UseHttpsRedirection();
+app.UseCors("AllowReactApp");
 app.UseAuthorization();
 app.MapControllers();
 
-// Add a simple root endpoint
-app.MapGet("/", () => new {
-    message = "Requirements Analyzer API is running",
-    version = "1.0.0",
-    timestamp = DateTime.UtcNow,
-    swagger = "/swagger",
-    features = new[] { "Project Management", "Requirements Analysis", "Quality Enhancement" }
-});
+// Auto-migrate database on startup
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
-// Improved startup logging
-var logger = app.Services.GetRequiredService<ILogger<Program>>();
-logger.LogInformation("Requirements Analyzer API starting up...");
-logger.LogInformation("Environment: {Environment}", app.Environment.EnvironmentName);
+    try
+    {
+        context.Database.Migrate();
+        logger.LogInformation("Database migration completed successfully.");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "An error occurred while migrating the database.");
+    }
+}
 
-// Get the configured URLs
-var urls = builder.Configuration["urls"] ?? "http://localhost:5074";
-logger.LogInformation("API available at: {Urls}", urls);
-logger.LogInformation("Swagger UI: {Url}/swagger", urls.Split(';')[0]);
-logger.LogInformation("Features: Project Management, Requirements Analysis, Quality Enhancement");
+// Test configuration on startup (optional)
+using (var scope = app.Services.CreateScope())
+{
+    var config = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<PerplexityConfig>>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    if (string.IsNullOrEmpty(config.Value.ApiKey))
+    {
+        logger.LogWarning("Perplexity API key is not configured. Please set PerplexityApi:ApiKey in user secrets or appsettings.");
+    }
+    else
+    {
+        logger.LogInformation("Perplexity API key is configured. Model: {Model}", config.Value.Model);
+    }
+}
 
 app.Run();

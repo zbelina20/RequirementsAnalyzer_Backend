@@ -1,33 +1,35 @@
 ﻿using RequirementsAnalyzer.API.DTOs;
 using RequirementsAnalyzer.API.Models;
+using RequirementsAnalyzer.API.Data;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
-using System.Linq;
+using Entities = RequirementsAnalyzer.API.Models.Entities; // Alias to resolve conflicts
 
 namespace RequirementsAnalyzer.API.Services
 {
     /// <summary>
-    /// In-memory implementation of project service for development
+    /// Database implementation of project service using Entity Framework
     /// </summary>
     public class ProjectService : IProjectService
     {
         private readonly ILogger<ProjectService> _logger;
         private readonly IPerplexityService _perplexityService;
-
-        // In-memory storage (replace with database later)
-        private static readonly List<Project> _projects = new();
-        private static readonly List<ProjectRequirement> _requirements = new();
-        private static int _nextProjectId = 1;
-        private static int _nextRequirementId = 1;
+        private readonly ApplicationDbContext _context;
 
         /// <summary>
         /// Initializes a new instance of the ProjectService
         /// </summary>
         /// <param name="logger">Logger instance</param>
         /// <param name="perplexityService">Perplexity service for analysis</param>
-        public ProjectService(ILogger<ProjectService> logger, IPerplexityService perplexityService)
+        /// <param name="context">Database context</param>
+        public ProjectService(
+            ILogger<ProjectService> logger,
+            IPerplexityService perplexityService,
+            ApplicationDbContext context)
         {
             _logger = logger;
             _perplexityService = perplexityService;
+            _context = context;
         }
 
         /// <summary>
@@ -36,18 +38,20 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>List of project DTOs</returns>
         public async Task<List<ProjectDto>> GetAllProjectsAsync()
         {
-            await Task.CompletedTask; // Simulate async operation
+            var projects = await _context.Projects
+                .Include(p => p.Requirements)
+                .ToListAsync();
 
-            return _projects.Select(p => new ProjectDto {
+            return projects.Select(p => new ProjectDto {
                 Id = p.Id,
                 Name = p.Name,
                 Description = p.Description,
                 CreatedAt = p.CreatedAt,
                 UpdatedAt = p.UpdatedAt,
-                RequirementCount = _requirements.Count(r => r.ProjectId == p.Id),
-                AnalyzedCount = _requirements.Count(r => r.ProjectId == p.Id && r.Status != RequirementStatus.Draft),
-                AverageQualityScore = _requirements
-                    .Where(r => r.ProjectId == p.Id && r.QualityScore.HasValue)
+                RequirementCount = p.Requirements.Count,
+                AnalyzedCount = p.Requirements.Count(r => r.Status != Entities.RequirementStatus.Draft),
+                AverageQualityScore = p.Requirements
+                    .Where(r => r.QualityScore.HasValue)
                     .Average(r => (double?)r.QualityScore)
             }).ToList();
         }
@@ -59,12 +63,11 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>Project with requirements or null if not found</returns>
         public async Task<ProjectDto?> GetProjectByIdAsync(int id)
         {
-            await Task.CompletedTask;
+            var project = await _context.Projects
+                .Include(p => p.Requirements)
+                .FirstOrDefaultAsync(p => p.Id == id);
 
-            var project = _projects.FirstOrDefault(p => p.Id == id);
             if (project == null) return null;
-
-            var requirements = _requirements.Where(r => r.ProjectId == id).ToList();
 
             return new ProjectDto {
                 Id = project.Id,
@@ -72,11 +75,12 @@ namespace RequirementsAnalyzer.API.Services
                 Description = project.Description,
                 CreatedAt = project.CreatedAt,
                 UpdatedAt = project.UpdatedAt,
-                RequirementCount = requirements.Count,
-                AnalyzedCount = requirements.Count(r => r.Status != RequirementStatus.Draft),
-                AverageQualityScore = requirements
+                RequirementCount = project.Requirements.Count,
+                AnalyzedCount = project.Requirements.Count(r => r.Status != Entities.RequirementStatus.Draft),
+                AverageQualityScore = project.Requirements
                     .Where(r => r.QualityScore.HasValue)
-                    .Average(r => (double?)r.QualityScore)
+                    .Average(r => (double?)r.QualityScore),
+                Requirements = project.Requirements.Select(MapToRequirementDto).ToList()
             };
         }
 
@@ -87,18 +91,13 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>Created project DTO</returns>
         public async Task<ProjectDto> CreateProjectAsync(CreateProjectRequest request)
         {
-            await Task.CompletedTask;
-
-            var project = new Project {
-                Id = _nextProjectId++,
+            var project = new Entities.Project {
                 Name = request.Name,
-                Description = request.Description,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                Description = request.Description
             };
 
-            _projects.Add(project);
-            _logger.LogInformation("Created project {ProjectId}: {ProjectName}", project.Id, project.Name);
+            _context.Projects.Add(project);
+            await _context.SaveChangesAsync();
 
             return new ProjectDto {
                 Id = project.Id,
@@ -108,7 +107,8 @@ namespace RequirementsAnalyzer.API.Services
                 UpdatedAt = project.UpdatedAt,
                 RequirementCount = 0,
                 AnalyzedCount = 0,
-                AverageQualityScore = null
+                AverageQualityScore = null,
+                Requirements = new List<RequirementDto>()
             };
         }
 
@@ -120,16 +120,17 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>Updated project DTO or null if not found</returns>
         public async Task<ProjectDto?> UpdateProjectAsync(int id, UpdateProjectRequest request)
         {
-            await Task.CompletedTask;
+            var project = await _context.Projects
+                .Include(p => p.Requirements)
+                .FirstOrDefaultAsync(p => p.Id == id);
 
-            var project = _projects.FirstOrDefault(p => p.Id == id);
             if (project == null) return null;
 
             project.Name = request.Name;
             project.Description = request.Description;
-            project.UpdatedAt = DateTime.UtcNow;
+            // UpdatedAt will be set automatically by the DbContext
 
-            var requirements = _requirements.Where(r => r.ProjectId == id).ToList();
+            await _context.SaveChangesAsync();
 
             return new ProjectDto {
                 Id = project.Id,
@@ -137,9 +138,9 @@ namespace RequirementsAnalyzer.API.Services
                 Description = project.Description,
                 CreatedAt = project.CreatedAt,
                 UpdatedAt = project.UpdatedAt,
-                RequirementCount = requirements.Count,
-                AnalyzedCount = requirements.Count(r => r.Status != RequirementStatus.Draft),
-                AverageQualityScore = requirements
+                RequirementCount = project.Requirements.Count,
+                AnalyzedCount = project.Requirements.Count(r => r.Status != Entities.RequirementStatus.Draft),
+                AverageQualityScore = project.Requirements
                     .Where(r => r.QualityScore.HasValue)
                     .Average(r => (double?)r.QualityScore)
             };
@@ -152,14 +153,11 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>True if deleted, false if not found</returns>
         public async Task<bool> DeleteProjectAsync(int id)
         {
-            await Task.CompletedTask;
-
-            var project = _projects.FirstOrDefault(p => p.Id == id);
+            var project = await _context.Projects.FindAsync(id);
             if (project == null) return false;
 
-            // Remove all requirements for this project
-            _requirements.RemoveAll(r => r.ProjectId == id);
-            _projects.Remove(project);
+            _context.Projects.Remove(project);
+            await _context.SaveChangesAsync();
 
             return true;
         }
@@ -171,56 +169,28 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>Project statistics or null if not found</returns>
         public async Task<ProjectStatsDto?> GetProjectStatsAsync(int id)
         {
-            await Task.CompletedTask;
+            var project = await _context.Projects
+                .Include(p => p.Requirements)
+                .FirstOrDefaultAsync(p => p.Id == id);
 
-            var project = _projects.FirstOrDefault(p => p.Id == id);
             if (project == null) return null;
 
-            var requirements = _requirements.Where(r => r.ProjectId == id).ToList();
-            var analyzed = requirements.Where(r => r.Status != RequirementStatus.Draft).ToList();
+            var requirements = project.Requirements.ToList();
 
-            var stats = new ProjectStatsDto {
+            return new ProjectStatsDto {
+                ProjectId = id,
                 TotalRequirements = requirements.Count,
-                AnalyzedRequirements = analyzed.Count,
-                EnhancedRequirements = requirements.Count(r => r.Status == RequirementStatus.Enhanced),
-                AverageQualityScore = analyzed
+                AnalyzedRequirements = requirements.Count(r => r.Status != Entities.RequirementStatus.Draft),
+                AverageQualityScore = requirements
                     .Where(r => r.QualityScore.HasValue)
-                    .Average(r => (double?)r.QualityScore)
+                    .Average(r => (double?)r.QualityScore),
+                StatusBreakdown = requirements
+                    .GroupBy(r => r.Status)
+                    .ToDictionary(g => g.Key.ToString(), g => g.Count()),
+                LastAnalyzed = requirements
+                    .Where(r => r.Status != Entities.RequirementStatus.Draft)
+                    .Max(r => (DateTime?)r.UpdatedAt)
             };
-
-            // Quality distribution
-            foreach (var req in analyzed.Where(r => r.QualityScore.HasValue))
-            {
-                var category = req.QualityScore >= 80 ? "Excellent" :
-                              req.QualityScore >= 60 ? "Good" :
-                              req.QualityScore >= 40 ? "Fair" : "Poor";
-                stats.QualityDistribution[category] = stats.QualityDistribution.GetValueOrDefault(category, 0) + 1;
-            }
-
-            // Common issues (simplified for in-memory implementation)
-            foreach (var req in analyzed.Where(r => !string.IsNullOrEmpty(r.AnalysisData)))
-            {
-                try
-                {
-                    var analysis = JsonSerializer.Deserialize<AnalysisResponse>(req.AnalysisData!);
-                    if (analysis?.Issues != null)
-                    {
-                        foreach (var issue in analysis.Issues)
-                        {
-                            if (!string.IsNullOrEmpty(issue.Type))
-                            {
-                                stats.CommonIssues[issue.Type] = stats.CommonIssues.GetValueOrDefault(issue.Type, 0) + 1;
-                            }
-                        }
-                    }
-                }
-                catch (JsonException ex)
-                {
-                    _logger.LogWarning(ex, "Failed to parse analysis data for requirement {RequirementId}", req.Id);
-                }
-            }
-
-            return stats;
         }
 
         /// <summary>
@@ -230,12 +200,12 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>List of requirement DTOs</returns>
         public async Task<List<RequirementDto>> GetProjectRequirementsAsync(int projectId)
         {
-            await Task.CompletedTask;
-
-            return _requirements
+            var requirements = await _context.Requirements
                 .Where(r => r.ProjectId == projectId)
-                .Select(MapToRequirementDto)
-                .ToList();
+                .OrderBy(r => r.CreatedAt)
+                .ToListAsync();
+
+            return requirements.Select(MapToRequirementDto).ToList();
         }
 
         /// <summary>
@@ -246,9 +216,9 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>Requirement DTO or null if not found</returns>
         public async Task<RequirementDto?> GetRequirementAsync(int projectId, int requirementId)
         {
-            await Task.CompletedTask;
+            var requirement = await _context.Requirements
+                .FirstOrDefaultAsync(r => r.ProjectId == projectId && r.Id == requirementId);
 
-            var requirement = _requirements.FirstOrDefault(r => r.ProjectId == projectId && r.Id == requirementId);
             return requirement != null ? MapToRequirementDto(requirement) : null;
         }
 
@@ -260,23 +230,18 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>Created requirement DTO or null if project not found</returns>
         public async Task<RequirementDto?> AddRequirementAsync(int projectId, CreateRequirementRequest request)
         {
-            await Task.CompletedTask;
-
-            var project = _projects.FirstOrDefault(p => p.Id == projectId);
+            var project = await _context.Projects.FindAsync(projectId);
             if (project == null) return null;
 
-            var requirement = new ProjectRequirement {
-                Id = _nextRequirementId++,
+            var requirement = new Entities.Requirement {
                 ProjectId = projectId,
                 Text = request.Text,
                 Title = request.Title,
-                Status = RequirementStatus.Draft,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                Status = Entities.RequirementStatus.Draft
             };
 
-            _requirements.Add(requirement);
-            project.UpdatedAt = DateTime.UtcNow;
+            _context.Requirements.Add(requirement);
+            await _context.SaveChangesAsync();
 
             return MapToRequirementDto(requirement);
         }
@@ -290,23 +255,22 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>Updated requirement DTO or null if not found</returns>
         public async Task<RequirementDto?> UpdateRequirementAsync(int projectId, int requirementId, UpdateRequirementRequest request)
         {
-            await Task.CompletedTask;
+            var requirement = await _context.Requirements
+                .FirstOrDefaultAsync(r => r.ProjectId == projectId && r.Id == requirementId);
 
-            var requirement = _requirements.FirstOrDefault(r => r.ProjectId == projectId && r.Id == requirementId);
             if (requirement == null) return null;
 
             requirement.Text = request.Text;
             requirement.Title = request.Title;
-            requirement.UpdatedAt = DateTime.UtcNow;
 
             // Reset analysis status if text changed significantly
-            requirement.Status = RequirementStatus.Draft;
+            requirement.Status = Entities.RequirementStatus.Draft;
             requirement.QualityScore = null;
             requirement.AnalysisData = null;
             requirement.EnhancementData = null;
+            // UpdatedAt will be set automatically by DbContext
 
-            var project = _projects.FirstOrDefault(p => p.Id == projectId);
-            if (project != null) project.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
 
             return MapToRequirementDto(requirement);
         }
@@ -319,15 +283,13 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>True if deleted, false if not found</returns>
         public async Task<bool> DeleteRequirementAsync(int projectId, int requirementId)
         {
-            await Task.CompletedTask;
+            var requirement = await _context.Requirements
+                .FirstOrDefaultAsync(r => r.ProjectId == projectId && r.Id == requirementId);
 
-            var requirement = _requirements.FirstOrDefault(r => r.ProjectId == projectId && r.Id == requirementId);
             if (requirement == null) return false;
 
-            _requirements.Remove(requirement);
-
-            var project = _projects.FirstOrDefault(p => p.Id == projectId);
-            if (project != null) project.UpdatedAt = DateTime.UtcNow;
+            _context.Requirements.Remove(requirement);
+            await _context.SaveChangesAsync();
 
             return true;
         }
@@ -340,30 +302,43 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>Analysis results or null if not found</returns>
         public async Task<AnalysisResponse?> AnalyzeRequirementAsync(int projectId, int requirementId)
         {
-            var requirement = _requirements.FirstOrDefault(r => r.ProjectId == projectId && r.Id == requirementId);
+            var requirement = await _context.Requirements
+                .FirstOrDefaultAsync(r => r.ProjectId == projectId && r.Id == requirementId);
+
             if (requirement == null) return null;
 
             try
             {
-                var analysis = await _perplexityService.AnalyzeRequirementAsync(requirement.Text);
+                // Use the Perplexity service for analysis
+                var analysisResponse = await _perplexityService.AnalyzeRequirementAsync(requirement.Text);
 
-                // Store analysis results
-                requirement.AnalysisData = JsonSerializer.Serialize(analysis);
-                requirement.QualityScore = (int?)analysis.OverallScore;
-                requirement.Status = RequirementStatus.Analyzed;
-                requirement.UpdatedAt = DateTime.UtcNow;
+                // Update requirement with analysis results
+                requirement.Status = Entities.RequirementStatus.Analyzed;
+                requirement.QualityScore = (int?)analysisResponse.OverallScore;
+                requirement.AnalysisData = JsonSerializer.Serialize(new {
+                    overallScore = analysisResponse.OverallScore,
+                    issues = analysisResponse.Issues.Select(i => new {
+                        type = i.Type,
+                        severity = i.Severity,
+                        description = i.Description,
+                        problematicText = i.ProblematicText,
+                        suggestion = i.Suggestion
+                    }),
+                    analyzedAt = analysisResponse.AnalyzedAt
+                });
 
-                var project = _projects.FirstOrDefault(p => p.Id == projectId);
-                if (project != null) project.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
 
-                return analysis;
+                return analysisResponse;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to analyze requirement {RequirementId}", requirementId);
-                requirement.Status = RequirementStatus.Failed;
-                requirement.UpdatedAt = DateTime.UtcNow;
-                throw;
+                _logger.LogError(ex, "Analysis failed for requirement {RequirementId}", requirementId);
+
+                requirement.Status = Entities.RequirementStatus.Rejected;
+                await _context.SaveChangesAsync();
+
+                throw new InvalidOperationException("Analysis failed", ex);
             }
         }
 
@@ -375,30 +350,40 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>Enhancement suggestions or null if not found</returns>
         public async Task<EnhancementResponse?> EnhanceRequirementAsync(int projectId, int requirementId)
         {
-            var requirement = _requirements.FirstOrDefault(r => r.ProjectId == projectId && r.Id == requirementId);
-            if (requirement == null || string.IsNullOrEmpty(requirement.AnalysisData)) return null;
+            var requirement = await _context.Requirements
+                .FirstOrDefaultAsync(r => r.ProjectId == projectId && r.Id == requirementId);
+
+            if (requirement == null || requirement.Status != Entities.RequirementStatus.Analyzed)
+                return null;
 
             try
             {
-                var analysis = JsonSerializer.Deserialize<AnalysisResponse>(requirement.AnalysisData);
-                if (analysis == null) return null;
+                var issues = new List<QualityIssueDto>();
 
-                var enhancement = await _perplexityService.EnhanceRequirementAsync(requirement.Text, analysis.Issues);
+                // Use the Perplexity service for enhancement
+                var enhancementResponse = await _perplexityService.EnhanceRequirementAsync(
+                    requirement.Text, issues);
 
-                // Store enhancement results
-                requirement.EnhancementData = JsonSerializer.Serialize(enhancement);
-                requirement.Status = RequirementStatus.Enhanced;
-                requirement.UpdatedAt = DateTime.UtcNow;
+                requirement.EnhancementData = JsonSerializer.Serialize(new {
+                    enhancements = enhancementResponse.Enhancements.Select(e => new {
+                        text = e.Text,
+                        changes = e.Changes ?? new List<string>(), // Already a List<string>, no need to split
+                        improvements = e.Improvements ?? new List<string>(), // Already a List<string>, no need to split
+                        qualityScore = e.QualityScore,
+                        rationale = e.Rationale
+                    }),
+                    recommendedIndex = enhancementResponse.RecommendedIndex
+                });
 
-                var project = _projects.FirstOrDefault(p => p.Id == projectId);
-                if (project != null) project.UpdatedAt = DateTime.UtcNow;
+                requirement.Status = Entities.RequirementStatus.Enhanced;
+                await _context.SaveChangesAsync();
 
-                return enhancement;
+                return enhancementResponse;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to enhance requirement {RequirementId}", requirementId);
-                throw;
+                _logger.LogError(ex, "Enhancement failed for requirement {RequirementId}", requirementId);
+                throw new InvalidOperationException("Enhancement failed", ex);
             }
         }
 
@@ -409,32 +394,53 @@ namespace RequirementsAnalyzer.API.Services
         /// <returns>List of analysis results or null if project not found</returns>
         public async Task<List<AnalysisResponse>?> AnalyzeAllRequirementsAsync(int projectId)
         {
-            await Task.CompletedTask; // Simulate async operation
-
-            var project = _projects.FirstOrDefault(p => p.Id == projectId);
+            var project = await _context.Projects.FindAsync(projectId);
             if (project == null) return null;
 
-            var requirements = _requirements.Where(r => r.ProjectId == projectId).ToList();
-            var analysisResults = new List<AnalysisResponse>();
+            var requirements = await _context.Requirements
+                .Where(r => r.ProjectId == projectId && r.Status == Entities.RequirementStatus.Draft)
+                .ToListAsync();
+
+            var results = new List<AnalysisResponse>();
 
             foreach (var requirement in requirements)
             {
-                // Analyze each requirement
-                var analysis = await _perplexityService.AnalyzeRequirementAsync(requirement.Text);
+                try
+                {
+                    var analysisResponse = await _perplexityService.AnalyzeRequirementAsync(requirement.Text);
 
-                // Update requirement with analysis data
-                requirement.AnalysisData = JsonSerializer.Serialize(analysis);
-                requirement.QualityScore = (int)analysis.OverallScore;
-                requirement.Status = RequirementStatus.Analyzed;
-                requirement.UpdatedAt = DateTime.UtcNow;
+                    // Update requirement
+                    requirement.Status = Entities.RequirementStatus.Analyzed;
+                    requirement.QualityScore = (int?)analysisResponse.OverallScore;
+                    requirement.AnalysisData = JsonSerializer.Serialize(new {
+                        overallScore = analysisResponse.OverallScore,
+                        issues = analysisResponse.Issues.Select(i => new {
+                            type = i.Type,
+                            severity = i.Severity,
+                            description = i.Description,
+                            problematicText = i.ProblematicText,
+                            suggestion = i.Suggestion
+                        }),
+                        analyzedAt = analysisResponse.AnalyzedAt
+                    });
 
-                analysisResults.Add(analysis);
+                    results.Add(analysisResponse);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Analysis failed for requirement {RequirementId}", requirement.Id);
+                    requirement.Status = Entities.RequirementStatus.Rejected;
+                }
             }
 
-            return analysisResults;
+            await _context.SaveChangesAsync();
+            return results;
         }
 
-        private RequirementDto MapToRequirementDto(ProjectRequirement requirement)
+        /// <summary>
+        /// Maps a requirement entity to a DTO
+        /// </summary>
+        private static RequirementDto MapToRequirementDto(Entities.Requirement requirement)
         {
             var dto = new RequirementDto {
                 Id = requirement.Id,
@@ -447,29 +453,31 @@ namespace RequirementsAnalyzer.API.Services
                 UpdatedAt = requirement.UpdatedAt
             };
 
-            // Parse analysis data if available
+            // Parse and include analysis data if available
             if (!string.IsNullOrEmpty(requirement.AnalysisData))
             {
                 try
                 {
-                    dto.Analysis = JsonSerializer.Deserialize<AnalysisResponse>(requirement.AnalysisData);
+                    var analysisData = JsonSerializer.Deserialize<JsonElement>(requirement.AnalysisData);
+                    dto.Analysis = analysisData;
                 }
-                catch (JsonException ex)
+                catch (Exception)
                 {
-                    _logger.LogWarning(ex, "Failed to parse analysis data for requirement {RequirementId}", requirement.Id);
+                    // Log but don't fail if JSON parsing fails
                 }
             }
 
-            // Parse enhancement data if available
+            // Parse and include enhancement data if available
             if (!string.IsNullOrEmpty(requirement.EnhancementData))
             {
                 try
                 {
-                    dto.Enhancements = JsonSerializer.Deserialize<EnhancementResponse>(requirement.EnhancementData);
+                    var enhancementData = JsonSerializer.Deserialize<JsonElement>(requirement.EnhancementData);
+                    dto.Enhancements = enhancementData;
                 }
-                catch (JsonException ex)
+                catch (Exception)
                 {
-                    _logger.LogWarning(ex, "Failed to parse enhancement data for requirement {RequirementId}", requirement.Id);
+                    // Log but don't fail if JSON parsing fails
                 }
             }
 

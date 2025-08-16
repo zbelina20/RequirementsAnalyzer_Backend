@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿// Update your ProjectsController.cs to add the missing CRUD endpoints
+
+using Microsoft.AspNetCore.Mvc;
 using RequirementsAnalyzer.API.DTOs;
 using RequirementsAnalyzer.API.Services;
 using System.Text.Json;
@@ -76,20 +78,17 @@ namespace RequirementsAnalyzer.API.Controllers
         /// Creates a new project
         /// </summary>
         /// <param name="request">Project creation request</param>
-        /// <returns>Created project information</returns>
+        /// <returns>Created project</returns>
         [HttpPost]
         public async Task<IActionResult> CreateProject([FromBody] CreateProjectRequest request)
         {
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
-                _logger.LogInformation("Creating new project: {ProjectName}", request.Name);
+                _logger.LogInformation("Creating project with name: {Name}", request.Name);
 
                 var project = await _projectService.CreateProjectAsync(request);
+
+                _logger.LogInformation("Created project {ProjectId}", project.Id);
                 return CreatedAtAction(nameof(GetProject), new { id = project.Id }, project);
             }
             catch (Exception ex)
@@ -104,16 +103,13 @@ namespace RequirementsAnalyzer.API.Controllers
         /// </summary>
         /// <param name="id">Project ID</param>
         /// <param name="request">Project update request</param>
-        /// <returns>Updated project information</returns>
+        /// <returns>Updated project</returns>
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateProject(int id, [FromBody] UpdateProjectRequest request)
         {
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
+                _logger.LogInformation("Updating project {ProjectId}", id);
 
                 var project = await _projectService.UpdateProjectAsync(id, request);
                 if (project == null)
@@ -121,7 +117,7 @@ namespace RequirementsAnalyzer.API.Controllers
                     return NotFound(new { error = "Project not found" });
                 }
 
-                _logger.LogInformation("Updated project {ProjectId}: {ProjectName}", id, request.Name);
+                _logger.LogInformation("Updated project {ProjectId}", id);
                 return Ok(project);
             }
             catch (Exception ex)
@@ -141,8 +137,10 @@ namespace RequirementsAnalyzer.API.Controllers
         {
             try
             {
-                var success = await _projectService.DeleteProjectAsync(id);
-                if (!success)
+                _logger.LogInformation("Deleting project {ProjectId}", id);
+
+                var deleted = await _projectService.DeleteProjectAsync(id);
+                if (!deleted)
                 {
                     return NotFound(new { error = "Project not found" });
                 }
@@ -158,7 +156,7 @@ namespace RequirementsAnalyzer.API.Controllers
         }
 
         /// <summary>
-        /// Gets project statistics and analysis summary
+        /// Gets project statistics
         /// </summary>
         /// <param name="id">Project ID</param>
         /// <returns>Project statistics</returns>
@@ -177,16 +175,16 @@ namespace RequirementsAnalyzer.API.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error retrieving stats for project {ProjectId}", id);
+                _logger.LogError(ex, "Error retrieving project stats for {ProjectId}", id);
                 return StatusCode(500, new { error = "Failed to retrieve project statistics" });
             }
         }
 
         /// <summary>
-        /// Gets all requirements for a specific project
+        /// Gets all requirements for a project
         /// </summary>
         /// <param name="id">Project ID</param>
-        /// <returns>List of project requirements</returns>
+        /// <returns>List of requirements</returns>
         [HttpGet("{id}/requirements")]
         public async Task<IActionResult> GetProjectRequirements(int id)
         {
@@ -203,20 +201,43 @@ namespace RequirementsAnalyzer.API.Controllers
         }
 
         /// <summary>
+        /// Gets a specific requirement
+        /// </summary>
+        /// <param name="id">Project ID</param>
+        /// <param name="requirementId">Requirement ID</param>
+        /// <returns>Requirement details</returns>
+        [HttpGet("{id}/requirements/{requirementId}")]
+        public async Task<IActionResult> GetRequirement(int id, int requirementId)
+        {
+            try
+            {
+                var requirement = await _projectService.GetRequirementAsync(id, requirementId);
+                if (requirement == null)
+                {
+                    return NotFound(new { error = "Requirement not found" });
+                }
+
+                return Ok(requirement);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving requirement {RequirementId} in project {ProjectId}", requirementId, id);
+                return StatusCode(500, new { error = "Failed to retrieve requirement" });
+            }
+        }
+
+        /// <summary>
         /// Adds a new requirement to a project
         /// </summary>
         /// <param name="id">Project ID</param>
         /// <param name="request">Requirement creation request</param>
-        /// <returns>Created requirement information</returns>
+        /// <returns>Created requirement</returns>
         [HttpPost("{id}/requirements")]
-        public async Task<IActionResult> AddRequirement(int id, [FromBody] CreateRequirementRequest request)
+        public async Task<IActionResult> CreateRequirement(int id, [FromBody] CreateRequirementRequest request)
         {
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
+                _logger.LogInformation("Creating requirement for project {ProjectId} with data: {Request}", id, request.GetType().Name);
 
                 var requirement = await _projectService.AddRequirementAsync(id, request);
                 if (requirement == null)
@@ -224,163 +245,129 @@ namespace RequirementsAnalyzer.API.Controllers
                     return NotFound(new { error = "Project not found" });
                 }
 
-                _logger.LogInformation("Added requirement to project {ProjectId}", id);
-                return CreatedAtAction(nameof(GetRequirement),
-                    new { projectId = id, requirementId = requirement.Id }, requirement);
+                _logger.LogInformation("Created requirement {RequirementId} for project {ProjectId}", requirement.Id, id);
+                return CreatedAtAction(nameof(GetRequirement), new { id, requirementId = requirement.Id }, requirement);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error adding requirement to project {ProjectId}", id);
-                return StatusCode(500, new { error = "Failed to add requirement" });
+                _logger.LogError(ex, "Error creating requirement for project {ProjectId}", id);
+                return StatusCode(500, new { error = "Failed to create requirement" });
             }
         }
 
         /// <summary>
-        /// Gets a specific requirement
+        /// Updates an existing requirement
         /// </summary>
-        /// <param name="projectId">Project ID</param>
-        /// <param name="requirementId">Requirement ID</param>
-        /// <returns>Requirement details</returns>
-        [HttpGet("{projectId}/requirements/{requirementId}")]
-        public async Task<IActionResult> GetRequirement(int projectId, int requirementId)
-        {
-            try
-            {
-                var requirement = await _projectService.GetRequirementAsync(projectId, requirementId);
-                if (requirement == null)
-                {
-                    return NotFound(new { error = "Requirement not found" });
-                }
-
-                return Ok(requirement);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving requirement {RequirementId} from project {ProjectId}",
-                    requirementId, projectId);
-                return StatusCode(500, new { error = "Failed to retrieve requirement" });
-            }
-        }
-
-        /// <summary>
-        /// Updates a specific requirement
-        /// </summary>
-        /// <param name="projectId">Project ID</param>
+        /// <param name="id">Project ID</param>
         /// <param name="requirementId">Requirement ID</param>
         /// <param name="request">Requirement update request</param>
-        /// <returns>Updated requirement information</returns>
-        [HttpPut("{projectId}/requirements/{requirementId}")]
-        public async Task<IActionResult> UpdateRequirement(int projectId, int requirementId,
-            [FromBody] UpdateRequirementRequest request)
+        /// <returns>Updated requirement</returns>
+        [HttpPut("{id}/requirements/{requirementId}")]
+        public async Task<IActionResult> UpdateRequirement(int id, int requirementId, [FromBody] UpdateRequirementRequest request)
         {
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
+                _logger.LogInformation("Updating requirement {RequirementId} in project {ProjectId}", requirementId, id);
 
-                var requirement = await _projectService.UpdateRequirementAsync(projectId, requirementId, request);
+                var requirement = await _projectService.UpdateRequirementAsync(id, requirementId, request);
                 if (requirement == null)
                 {
                     return NotFound(new { error = "Requirement not found" });
                 }
 
-                _logger.LogInformation("Updated requirement {RequirementId} in project {ProjectId}",
-                    requirementId, projectId);
+                _logger.LogInformation("Updated requirement {RequirementId} in project {ProjectId}", requirementId, id);
                 return Ok(requirement);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error updating requirement {RequirementId} in project {ProjectId}",
-                    requirementId, projectId);
+                _logger.LogError(ex, "Error updating requirement {RequirementId} in project {ProjectId}", requirementId, id);
                 return StatusCode(500, new { error = "Failed to update requirement" });
             }
         }
 
         /// <summary>
-        /// Deletes a specific requirement
+        /// Deletes a requirement from a project
         /// </summary>
-        /// <param name="projectId">Project ID</param>
+        /// <param name="id">Project ID</param>
         /// <param name="requirementId">Requirement ID</param>
         /// <returns>Success confirmation</returns>
-        [HttpDelete("{projectId}/requirements/{requirementId}")]
-        public async Task<IActionResult> DeleteRequirement(int projectId, int requirementId)
+        [HttpDelete("{id}/requirements/{requirementId}")]
+        public async Task<IActionResult> DeleteRequirement(int id, int requirementId)
         {
             try
             {
-                var success = await _projectService.DeleteRequirementAsync(projectId, requirementId);
-                if (!success)
+                _logger.LogInformation("Deleting requirement {RequirementId} from project {ProjectId}", requirementId, id);
+
+                var deleted = await _projectService.DeleteRequirementAsync(id, requirementId);
+                if (!deleted)
                 {
                     return NotFound(new { error = "Requirement not found" });
                 }
 
-                _logger.LogInformation("Deleted requirement {RequirementId} from project {ProjectId}",
-                    requirementId, projectId);
+                _logger.LogInformation("Deleted requirement {RequirementId} from project {ProjectId}", requirementId, id);
                 return Ok(new { message = "Requirement deleted successfully" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error deleting requirement {RequirementId} from project {ProjectId}",
-                    requirementId, projectId);
+                _logger.LogError(ex, "Error deleting requirement {RequirementId} from project {ProjectId}", requirementId, id);
                 return StatusCode(500, new { error = "Failed to delete requirement" });
             }
         }
 
         /// <summary>
-        /// Analyzes a specific requirement for quality issues
+        /// Analyzes a requirement for quality issues
         /// </summary>
-        /// <param name="projectId">Project ID</param>
+        /// <param name="id">Project ID</param>
         /// <param name="requirementId">Requirement ID</param>
         /// <returns>Analysis results</returns>
-        [HttpPost("{projectId}/requirements/{requirementId}/analyze")]
-        public async Task<IActionResult> AnalyzeRequirement(int projectId, int requirementId)
+        [HttpPost("{id}/requirements/{requirementId}/analyze")]
+        public async Task<IActionResult> AnalyzeRequirement(int id, int requirementId)
         {
             try
             {
-                var result = await _projectService.AnalyzeRequirementAsync(projectId, requirementId);
-                if (result is null)
+                _logger.LogInformation("Analyzing requirement {RequirementId} in project {ProjectId}", requirementId, id);
+
+                var analysis = await _projectService.AnalyzeRequirementAsync(id, requirementId);
+                if (analysis == null)
                 {
                     return NotFound(new { error = "Requirement not found" });
                 }
 
-                _logger.LogInformation("Analyzed requirement {RequirementId} in project {ProjectId}",
-                    requirementId, projectId);
-                return Ok(result);
+                _logger.LogInformation("Analyzed requirement {RequirementId} in project {ProjectId}", requirementId, id);
+                return Ok(analysis);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error analyzing requirement {RequirementId} in project {ProjectId}",
-                    requirementId, projectId);
+                _logger.LogError(ex, "Error analyzing requirement {RequirementId} in project {ProjectId}", requirementId, id);
                 return StatusCode(500, new { error = "Failed to analyze requirement" });
             }
         }
 
         /// <summary>
-        /// Generates enhancements for a specific requirement
+        /// Generates enhancement suggestions for a requirement
         /// </summary>
-        /// <param name="projectId">Project ID</param>
+        /// <param name="id">Project ID</param>
         /// <param name="requirementId">Requirement ID</param>
         /// <returns>Enhancement suggestions</returns>
-        [HttpPost("{projectId}/requirements/{requirementId}/enhance")]
-        public async Task<IActionResult> EnhanceRequirement(int projectId, int requirementId)
+        [HttpPost("{id}/requirements/{requirementId}/enhance")]
+        public async Task<IActionResult> EnhanceRequirement(int id, int requirementId)
         {
             try
             {
-                var result = await _projectService.EnhanceRequirementAsync(projectId, requirementId);
-                if (result is null)
+                _logger.LogInformation("Enhancing requirement {RequirementId} in project {ProjectId}", requirementId, id);
+
+                var enhancement = await _projectService.EnhanceRequirementAsync(id, requirementId);
+                if (enhancement == null)
                 {
                     return NotFound(new { error = "Requirement not found or not analyzed" });
                 }
 
-                _logger.LogInformation("Generated enhancements for requirement {RequirementId} in project {ProjectId}",
-                    requirementId, projectId);
-                return Ok(result);
+                _logger.LogInformation("Enhanced requirement {RequirementId} in project {ProjectId}", requirementId, id);
+                return Ok(enhancement);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error enhancing requirement {RequirementId} in project {ProjectId}",
-                    requirementId, projectId);
+                _logger.LogError(ex, "Error enhancing requirement {RequirementId} in project {ProjectId}", requirementId, id);
                 return StatusCode(500, new { error = "Failed to enhance requirement" });
             }
         }
@@ -390,28 +377,26 @@ namespace RequirementsAnalyzer.API.Controllers
         /// </summary>
         /// <param name="id">Project ID</param>
         /// <returns>Batch analysis results</returns>
-        [HttpPost("{id}/analyze-all")]
+        [HttpPost("{id}/requirements/analyze-all")]
         public async Task<IActionResult> AnalyzeAllRequirements(int id)
         {
             try
             {
+                _logger.LogInformation("Analyzing all requirements in project {ProjectId}", id);
+
                 var results = await _projectService.AnalyzeAllRequirementsAsync(id);
                 if (results == null)
                 {
                     return NotFound(new { error = "Project not found" });
                 }
 
-                _logger.LogInformation("Analyzed all requirements in project {ProjectId}", id);
-                return Ok(new {
-                    message = "Batch analysis completed",
-                    analyzedCount = results.Count,
-                    results = results
-                });
+                _logger.LogInformation("Analyzed {Count} requirements in project {ProjectId}", results.Count, id);
+                return Ok(results);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error analyzing all requirements in project {ProjectId}", id);
-                return StatusCode(500, new { error = "Failed to analyze project requirements" });
+                return StatusCode(500, new { error = "Failed to analyze requirements" });
             }
         }
     }
